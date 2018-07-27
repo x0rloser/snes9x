@@ -1576,6 +1576,60 @@ bool8 CMemory::LoadROM (const char *filename)
     return TRUE;
 }
 
+static uint32 get_32bit_le(void* buff)
+{
+	uint8* p_buff = (uint8*)buff;
+	uint32 val = 0;
+	val =	((uint32)p_buff[0]<< 0) |
+			((uint32)p_buff[1]<< 8) |
+			((uint32)p_buff[2]<<16) |
+			((uint32)p_buff[3]<<24);
+	return val;
+}
+
+// Takes a buffer and size of buffer.
+// Removes all .sfrom specific sections and leaves the bare rom
+// at the start of the buffer and returns the size of the bare rom.
+// If buffer does not contain a .sfrom it will not touch the buffer
+// and will return the size of the original rom data.
+static uint32 remove_sfrom_extra_bits(uint8* rom, uint32 romSize)
+{
+	// check that params are valid for starting .sfrom checks
+	if( romSize < 0x18 || rom == NULL )
+		return romSize;
+	
+	// check for ?version? field being 0x100.
+	// and check that filesize field matches size of rom.
+	uint8* p_sfrom_offset_info = rom;
+	if( get_32bit_le(p_sfrom_offset_info+0x00) != 0x100 )
+		return romSize;
+	if( get_32bit_le(p_sfrom_offset_info+0x04) != romSize )
+		return romSize;
+	
+	// get offset of rom data and offset of "settings" section
+	// then check that they are valid.
+	uint32 rom_offset = get_32bit_le(p_sfrom_offset_info+0x08);
+	uint32 settings_offset = get_32bit_le(p_sfrom_offset_info+0x14);
+	if( settings_offset + 1+4 > romSize )
+		return romSize;
+	uint8* p_sfrom_settings_info = rom + settings_offset;
+	
+	// get rom size from settings section
+	// and check that is is valid
+	uint32 rom_size = get_32bit_le(p_sfrom_settings_info+1);
+	if( rom_size <= 0 ||
+		rom_size > romSize ||
+		rom_offset+rom_size > romSize ||
+		rom_offset+rom_size < rom_offset )
+	{
+		return romSize;
+	}
+	
+	// extract rom from sfrom
+	memmove(rom, rom+rom_offset, rom_size);
+	return rom_size;
+}
+
 bool8 CMemory::LoadROMInt (int32 ROMfillSize)
 {
 	Settings.DisplayColor = BUILD_PIXEL(31, 31, 31);
@@ -1586,6 +1640,10 @@ bool8 CMemory::LoadROMInt (int32 ROMfillSize)
 
 	int	hi_score, lo_score;
 
+	// Remove sfrom hdr and extra sections from official nintendo roms.
+	// These headers/sections are present on roms included in SNES Mini (aka SNES Classic).
+	ROMfillSize = remove_sfrom_extra_bits(ROM, ROMfillSize);
+	
 	hi_score = ScoreHiROM(FALSE);
 	lo_score = ScoreLoROM(FALSE);
 
